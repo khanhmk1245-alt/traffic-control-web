@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Điều Khiển Giao Thông Thông Minh</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-bg: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --primary: #3b82f6;
+            --red-light: #ef4444;
+            --yellow-light: #eab308;
+            --green-light: #22c55e;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+        body { background-color: var(--bg-color); color: var(--text-main); padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+
+        .header { text-align: center; margin-bottom: 20px; width: 100%; max-width: 1000px; display: flex; justify-content: space-between; align-items: center; background: var(--panel-bg); padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+        .header h1 { font-size: 1.5rem; text-transform: uppercase; letter-spacing: 1px; color: var(--primary); }
+        .rtc-clock { font-size: 1.2rem; font-weight: bold; font-family: monospace; color: var(--green-light); }
+
+        .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 1000px; }
+
+        .panel { background: var(--panel-bg); padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+        .panel h2 { font-size: 1.2rem; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+
+        /* MQTT Connection Panel */
+        .mqtt-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .mqtt-inputs input { width: 100%; padding: 12px; background: #334155; border: 1px solid #475569; border-radius: 8px; color: white; outline: none; transition: border-color 0.3s; }
+        .mqtt-inputs input:focus { border-color: var(--primary); }
+        .mqtt-url-full { grid-column: 1 / -1; }
+        .connection-status { font-size: 0.9rem; font-weight: bold; padding: 5px 10px; border-radius: 5px; background: #334155; }
+        .status-off { color: var(--red-light); }
+        .status-on { color: var(--green-light); box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
+
+        /* Traffic Lights */
+        .lights-container { display: flex; justify-content: center; gap: 60px; align-items: flex-end; padding-top: 10px; }
+        .traffic-post { background: #334155; padding: 15px; border-radius: 30px; display: flex; flex-direction: column; gap: 15px; box-shadow: inset 0 0 10px rgba(0,0,0,0.8); }
+        .light { width: 50px; height: 50px; border-radius: 50%; background: #111; opacity: 0.2; transition: all 0.3s ease; }
+        .light.red.active { background: var(--red-light); box-shadow: 0 0 25px var(--red-light); opacity: 1; }
+        .light.yellow.active { background: var(--yellow-light); box-shadow: 0 0 25px var(--yellow-light); opacity: 1; }
+        .light.green.active { background: var(--green-light); box-shadow: 0 0 25px var(--green-light); opacity: 1; }
+        .post-label { text-align: center; margin-top: 10px; font-weight: bold; color: var(--text-muted); }
+
+        /* Controls */
+        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .btn { padding: 15px; border: none; border-radius: 10px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: all 0.1s ease-in-out; background: #334155; color: white; display: flex; align-items: center; justify-content: center; gap: 10px; }
+        
+        /* Hiệu ứng khi lướt và BẤM nút */
+        .btn:hover { background: #475569; filter: brightness(1.1); }
+        .btn:active { transform: scale(0.92); filter: brightness(0.8); } /* Hiệu ứng lún xuống khi bấm */
+        
+        .btn.active-mode { background: var(--primary); box-shadow: 0 0 15px var(--primary); }
+        .btn-red:hover { background: var(--red-light); }
+        .btn-yellow:hover { background: var(--yellow-light); color: black; }
+        .btn-green:hover { background: var(--green-light); }
+        .btn-connect { background: var(--primary); grid-column: 1 / -1; }
+        .btn-connect.connected { background: var(--red-light); }
+
+        /* Stats */
+        .stats-grid { display: flex; flex-direction: column; gap: 20px; margin-top: 20px; }
+        .stat-card { background: #334155; padding: 25px 20px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .stat-label { font-size: 1.1rem; color: var(--text-muted); }
+        .stat-value { font-size: 2rem; font-weight: bold; font-family: monospace; color: var(--primary); }
+
+        @media (max-width: 768px) { .dashboard { grid-template-columns: 1fr; } .header { flex-direction: column; gap: 10px; } .lights-container { gap: 30px; } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1><i class="fas fa-traffic-light"></i> Hệ Thống ITS - Giao Lộ</h1>
+        <div class="rtc-clock" id="clock">00:00:00</div>
+    </div>
+
+    <div class="panel" style="width: 100%; max-width: 1000px; margin-bottom: 20px;">
+        <h2>
+            <span><i class="fas fa-wifi"></i> Cấu hình Server MQTT</span>
+            <span class="connection-status status-off" id="mqtt-status-badge">Trạng thái: OFF</span>
+        </h2>
+        <div class="mqtt-inputs">
+            <input type="text" id="mqtt-url" class="mqtt-url-full" placeholder="Broker URL (vd: wss://broker.emqx.io:8084/mqtt)" value="wss://broker.emqx.io:8084/mqtt">
+            <input type="text" id="mqtt-user" placeholder="Tài khoản (Để trống nếu không có)">
+            <input type="password" id="mqtt-pass" placeholder="Mật khẩu (Để trống nếu không có)">
+            <button class="btn btn-connect" id="btn-toggle-connect" onclick="toggleMqttConnection()"><i class="fas fa-link"></i> KẾT NỐI (ON)</button>
+        </div>
+    </div>
+
+    <div class="dashboard">
+        <div class="panel">
+            <h2><i class="fas fa-eye"></i> Trạng Thái Thực Tế</h2>
+            <div class="lights-container">
+                <div>
+                    <div class="traffic-post">
+                        <div class="light red" id="h1-red"></div>
+                        <div class="light yellow" id="h1-yellow"></div>
+                        <div class="light green" id="h1-green"></div>
+                    </div>
+                    <div class="post-label">HƯỚNG 1</div>
+                </div>
+                <div>
+                    <div class="traffic-post">
+                        <div class="light red" id="h2-red"></div>
+                        <div class="light yellow" id="h2-yellow"></div>
+                        <div class="light green" id="h2-green"></div>
+                    </div>
+                    <div class="post-label">HƯỚNG 2</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2><i class="fas fa-chart-bar"></i> Lưu Lượng Giao Thông</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-label"><i class="fas fa-car-side"></i> Số xe Hướng 1</span>
+                    <span class="stat-value" id="car-h1">0</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-label"><i class="fas fa-car-side"></i> Số xe Hướng 2</span>
+                    <span class="stat-value" id="car-h2">0</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="grid-column: 1 / -1;">
+            <h2><i class="fas fa-gamepad"></i> Bảng Điều Khiển Trực Tiếp</h2>
+            <div class="controls-grid">
+                <button class="btn active-mode" id="btn-auto" onclick="sendCommand('auto')"><i class="fas fa-robot"></i> AUTO</button>
+                <button class="btn" id="btn-manual" onclick="sendCommand('manual')"><i class="fas fa-hand-paper"></i> MANUAL</button>
+                <button class="btn btn-green" onclick="sendCommand('h1_green')"><i class="fas fa-arrow-left"></i> H1 GREEN</button>
+                <button class="btn btn-green" onclick="sendCommand('h2_green')"><i class="fas fa-arrow-right"></i> H2 GREEN</button>
+                <button class="btn btn-red" onclick="sendCommand('all_red')"><i class="fas fa-stop-circle"></i> ALL RED</button>
+                <button class="btn btn-yellow" onclick="sendCommand('night_blink')"><i class="fas fa-moon"></i> NIGHT BLINK</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 1. Đồng hồ thời gian thực
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toLocaleTimeString('vi-VN');
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // 2. Biến MQTT Global
+        let client = null;
+        let isConnected = false;
+        const topics = {
+            control: 'its/project/traffic/control',
+            status: 'its/project/traffic/status',
+            lights: 'its/project/traffic/lights'
+        };
+
+        // 3. Hàm Kết nối / Ngắt kết nối MQTT
+        function toggleMqttConnection() {
+            const btnConnect = document.getElementById('btn-toggle-connect');
+            const statusBadge = document.getElementById('mqtt-status-badge');
+
+            if (isConnected && client) {
+                // Ngắt kết nối
+                client.end();
+                isConnected = false;
+                
+                // Cập nhật UI
+                btnConnect.innerHTML = '<i class="fas fa-link"></i> KẾT NỐI (ON)';
+                btnConnect.classList.remove('connected');
+                statusBadge.innerText = 'Trạng thái: OFF';
+                statusBadge.className = 'connection-status status-off';
+                
+                // Tắt hết đèn khi mất kết nối
+                document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
+                
+            } else {
+                // Bắt đầu kết nối
+                const url = document.getElementById('mqtt-url').value;
+                const user = document.getElementById('mqtt-user').value;
+                const pass = document.getElementById('mqtt-pass').value;
+
+                // Cấu hình Options (có tài khoản/mật khẩu nếu người dùng nhập)
+                const options = {};
+                if (user) options.username = user;
+                if (pass) options.password = pass;
+
+                statusBadge.innerText = 'Đang kết nối...';
+                statusBadge.style.color = 'var(--yellow-light)';
+
+                client = mqtt.connect(url, options);
+
+                client.on('connect', () => {
+                    isConnected = true;
+                    btnConnect.innerHTML = '<i class="fas fa-unlink"></i> NGẮT KẾT NỐI (OFF)';
+                    btnConnect.classList.add('connected');
+                    
+                    statusBadge.innerText = 'Trạng thái: ON';
+                    statusBadge.className = 'connection-status status-on';
+
+                    client.subscribe([topics.status, topics.lights], (err) => {
+                        if(err) alert('Lỗi Subscribe Topics!');
+                    });
+                });
+
+                client.on('error', (err) => {
+                    alert('Lỗi kết nối MQTT. Kiểm tra lại thông tin!');
+                    client.end();
+                });
+
+                // Xử lý dữ liệu nhận được
+                client.on('message', (topic, message) => {
+                    try {
+                        const data = JSON.parse(message.toString());
+                        
+                        if (topic === topics.status) {
+                            if(data.car_h1 !== undefined) document.getElementById('car-h1').innerText = data.car_h1;
+                            if(data.car_h2 !== undefined) document.getElementById('car-h2').innerText = data.car_h2;
+                            
+                            if(data.mode === 'AUTO') {
+                                document.getElementById('btn-auto').classList.add('active-mode');
+                                document.getElementById('btn-manual').classList.remove('active-mode');
+                            } else if (data.mode === 'MANUAL') {
+                                document.getElementById('btn-manual').classList.add('active-mode');
+                                document.getElementById('btn-auto').classList.remove('active-mode');
+                            }
+                        } 
+                        else if (topic === topics.lights) {
+                            document.querySelectorAll('.light').forEach(el => el.classList.remove('active'));
+                            if(data.h1) document.getElementById(`h1-${data.h1}`).classList.add('active');
+                            if(data.h2) document.getElementById(`h2-${data.h2}`).classList.add('active');
+                        }
+                    } catch (e) {
+                        console.error('Lỗi parse JSON:', e);
+                    }
+                });
+            }
+        }
+
+        // 4. Gửi lệnh
+        function sendCommand(cmd) {
+            if (!isConnected) {
+                alert("Vui lòng BẬT kết nối MQTT trước khi điều khiển!");
+                return;
+            }
+            const payload = JSON.stringify({ command: cmd });
+            client.publish(topics.control, payload);
+            
+            // Xử lý UI giữ nút cho AUTO / MANUAL
+            if(cmd === 'auto' || cmd === 'manual') {
+                document.getElementById('btn-auto').classList.remove('active-mode');
+                document.getElementById('btn-manual').classList.remove('active-mode');
+                document.getElementById(`btn-${cmd}`).classList.add('active-mode');
+            }
+        }
+    </script>
+</body>
+</html>
